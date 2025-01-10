@@ -1,8 +1,3 @@
-# Uniswap-V2-fork-bahamut-test-invalid-pair-creation
-
-Aqui está um exemplo de `README.md` que você pode adicionar ao seu repositório Foundry no GitHub para documentar o relatório de bug bounty:
-
-```markdown
 # UniswapV2Factory ERC-20 Validation Vulnerability
 
 Este repositório contém um relatório detalhado e um Proof of Concept (PoC) para uma vulnerabilidade identificada no contrato `UniswapV2Factory`. A vulnerabilidade permite a criação de pares de tokens sem validar se os endereços fornecidos são contratos ERC-20 válidos, o que pode comprometer a segurança e a integridade do ecossistema Uniswap.
