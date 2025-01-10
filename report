@@ -1,0 +1,212 @@
+```markdown
+# Bug Description
+
+The UniswapV2Factory contract allows the creation of token pairs without validating whether the provided addresses are valid ERC-20 contracts. The `createPair` function only prevents the use of identical tokens or the zero address for creating pairs. This creates a significant vulnerability, as any address (valid or invalid) can be used to create pairs, including non-ERC-20 contracts or even malicious contracts.
+
+The contract does not perform any checks to ensure that the provided tokens are valid ERC-20 tokens, which can lead to pairs being created with invalid or malicious tokens. This undermines the security and operation of the contract, as it allows the inclusion of tokens that do not implement the standard ERC-20 methods such as `totalSupply`, `balanceOf`, and `transfer`.
+
+## Impact
+
+The lack of validation for ERC-20 compliance in the tokens provided to the `createPair` function undermines the integrity and security of the Uniswap ecosystem. This vulnerability compromises the robustness and trust in Uniswap, making it susceptible to the following risks:
+
+- **Liquidity Pool Instability**: The ability to create pairs with invalid tokens can lead to the formation of liquidity pools with no real value. These pools disrupt the overall liquidity of the Uniswap platform, affecting price discovery and the smooth operation of the decentralized exchange.
+  
+- **Exploitation of Vulnerabilities in Dependent Protocols**: Invalid token pairs could interact with other protocols or smart contracts relying on Uniswap for liquidity, potentially triggering unforeseen behavior. This creates a chain of risks that could affect the stability of interconnected systems, amplifying the impact of a single vulnerability.
+
+- **Erosion of User Trust**: Users interacting with the platform may unknowingly engage with invalid token pairs, leading to failed transactions, financial losses, or locked assets. Over time, this erodes confidence in the platform’s reliability, making it harder to attract liquidity providers and users.
+
+In summary, this vulnerability weakens the core functionality of Uniswap by allowing invalid or non-compliant tokens to be paired, which can result in systemic failures and undermine the platform’s reputation as a secure and efficient decentralized exchange. This issue poses a significant risk to the entire DeFi ecosystem, as it directly impacts the reliability and safety of token trades and liquidity provision.
+
+## Risk Breakdown
+
+- **Difficulty to Exploit**: Easy  
+  The exploit is straightforward. Any user can interact with the `createPair` function and provide invalid (non-ERC-20) token addresses. The contract lacks validation to prevent this.
+
+- **Weakness**:  
+  The contract lacks proper validation to ensure that the provided tokens are valid ERC-20 contracts. Invalid tokens or non-ERC-20 contracts can be used, compromising the integrity of the system.
+
+- **Remedy Vulnerability Scoring System 1.0 Score**: 8.2 (High)
+
+## Recommendation
+
+### ERC-20 Validation
+
+It is recommended to add a check to ensure that the tokens provided for pair creation conform to the ERC-20 standard. The validation should ensure that both tokens implement the basic ERC-20 functions, such as `totalSupply`, `balanceOf`, and `transfer`.
+
+#### Example Verification Code:
+
+```solidity
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount) external returns (bool);
+}
+
+function isERC20(address token) internal view returns (bool) {
+    try IERC20(token).totalSupply() returns (uint256) {
+        return true;
+    } catch {
+        return false;
+    }
+}
+```
+
+### Implementation in `createPair` Function
+
+Add ERC-20 validation in the `createPair` function to ensure that both tokens are valid before allowing the pair to be created.
+
+#### Modified Code Example:
+
+```solidity
+function createPair(address tokenA, address tokenB) external returns (address pair) {
+    require(tokenA != tokenB, "UniswapV2: IDENTICAL_ADDRESSES");
+    require(isERC20(tokenA) && isERC20(tokenB), "UniswapV2: INVALID_ERC20");
+    (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+    require(token0 != address(0), "UniswapV2: ZERO_ADDRESS");
+    require(getPair[token0][token1] == address(0), "UniswapV2: PAIR_EXISTS");
+
+    bytes memory bytecode = type(UniswapV2Pair).creationCode;
+    bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+    assembly {
+        pair := create2(0, add(bytecode, 32), mload(bytecode), salt)
+    }
+
+    IUniswapV2Pair(pair).initialize(token0, token1);
+    getPair[token0][token1] = pair;
+    getPair[token1][token0] = pair;
+    allPairs.push(pair);
+    emit PairCreated(token0, token1, pair, allPairs.length);
+}
+```
+
+### Unit Testing
+
+Implement comprehensive unit tests to validate the correctness of the checks, including success cases (valid tokens) and failure cases (invalid or non-ERC-20 compliant tokens).
+
+---
+
+## Proof Of Concept
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import "forge-std/Test.sol";
+
+contract TestUniswapFactory is Test {
+    address public factoryAddress = 0xd0C5d23290d63E06a0c4B87F14bD2F7aA551a895; // Address of the UniswapV2Factory contract
+
+    function testCreatePairWithInvalidTokens() public {
+        address factory = factoryAddress;
+
+        // Check the number of pairs before attempting to create an invalid pair
+        (bool successAllPairsBefore, bytes memory dataAllPairsBefore) = factory.call(
+            abi.encodeWithSignature("allPairsLength()")
+        );
+        require(successAllPairsBefore, "Failed to query allPairsLength before");
+        uint256 allPairsLengthBefore = abi.decode(dataAllPairsBefore, (uint256));
+
+        // Use two random invalid addresses (non-ERC-20)
+        address invalidTokenAddress1 = 0x5555555555555555555555555555555555555555; // Fictitious address 1
+        address invalidTokenAddress2 = 0x6666666666666666666666666666666666666666; // Fictitious address 2
+
+        // Attempt to create the pair with the two "invalid tokens" with different addresses
+        (bool success, bytes memory returnData) = factory.call(
+            abi.encodeWithSignature("createPair(address,address)", invalidTokenAddress1, invalidTokenAddress2)
+        );
+
+        // Debug: Print the reason for failure, if any
+        if (!success) {
+            emit log_bytes(returnData);
+        }
+
+        // Validation: Ensure the pair creation failed
+        require(!success, "Pair creation should not have succeeded");
+
+        // Check the number of pairs after the attempted invalid pair creation
+        (bool successAllPairsAfter, bytes memory dataAllPairsAfter) = factory.call(
+            abi.encodeWithSignature("allPairsLength()")
+        );
+        require(successAllPairsAfter, "Failed to query allPairsLength after");
+        uint256 allPairsLengthAfter = abi.decode(dataAllPairsAfter, (uint256));
+
+        // Ensure that the number of pairs has not changed
+        assertEq(allPairsLengthBefore, allPairsLengthAfter, "Invalid pair should not have been added to the allPairs list");
+
+        // Check if the pair was not created in the getPair mapping
+        (bool successGetPair, bytes memory dataGetPair) = factory.call(
+            abi.encodeWithSignature("getPair(address,address)", invalidTokenAddress1, invalidTokenAddress2)
+        );
+        require(successGetPair, "Failed to query getPair");
+        address storedPair = abi.decode(dataGetPair, (address));
+        assertEq(storedPair, address(0), "Invalid pair should not exist in the getPair mapping");
+    }
+}
+```
+
+```markdown
+### Test Explanation
+
+The test evaluates the behavior of the **UniswapV2Factory** contract when invalid token addresses are provided during the creation of a token pair. The objective is to ensure the contract enforces proper validation, preventing the creation of a token pair with invalid tokens. It also checks that such invalid attempts do not affect the `getPair` mapping or the `allPairs` list.
+
+---
+
+### Steps:
+
+1. **Factory Contract Address Definition**:
+   The address of the **UniswapV2Factory** contract is stored in the `factoryAddress` variable for reference.
+
+2. **Querying the Number of Pairs Before Attempting to Create an Invalid Pair**:
+   The test begins by calling the `allPairsLength()` function to check the number of pairs already created in the contract.
+
+3. **Defining Invalid Token Addresses**:
+   Two fictional token addresses are defined to represent invalid tokens.
+
+4. **Attempting to Create a Pair with Invalid Tokens**:
+   The test invokes the `createPair` function of the factory contract, passing the invalid token addresses. The expectation is that the function call will fail, as the contract should validate that token addresses are valid and distinct.
+
+5. **Validating the Failure of Pair Creation**:
+   After attempting to create the pair, the test ensures that the operation was unsuccessful.
+
+6. **Querying the Number of Pairs After the Attempted Creation**:
+   The `allPairsLength()` function is called again to confirm that the number of pairs remains unchanged.
+
+7. **Checking the `getPair` Mapping**:
+   The test verifies that the pair is not recorded in the `getPair` mapping, indicating that the invalid tokens did not result in a successful pair creation.
+
+8. **Test Result**:
+   The test fails, demonstrating that the **UniswapV2Factory** contract does not properly reject the creation of pairs with invalid token addresses. This represents a vulnerability, as it allows pairs with invalid tokens to be created.
+
+
+---
+
+### Running the Test
+
+To execute the test, you will need the following setup:
+
+1. **Install Foundry**:
+   Ensure Foundry is installed on your system. Follow the [Foundry installation guide](https://book.getfoundry.sh/getting-started/installation.html) if necessary.
+
+2. **Run Anvil**:
+   Open a terminal and run the following command to start Anvil with a fork of the network:
+   ```bash
+   anvil --fork-url https://bahamut-rpc.publicnode.com
+   ```
+
+3. **Create the Proof of Concept File**:
+Save the provided Proof of Concept (PoC) code into a Solidity test file named test.t.sol. Ensure this file is located within your project's designated test directory.
+
+4. **Run Tests**:
+   Open another terminal and run the following command to execute the test:
+   ```bash
+   forge test --fork-url https://bahamut-rpc.publicnode.com
+   ```
+   
+Following these steps will reproduce the test and its results.
+```
+
+---
+
+### Conclusion
+
+This test highlights a potential security issue in the **UniswapV2Factory** contract. The failure indicates that the contract permits the creation of pairs with invalid token addresses, which should not occur. Proper validation should be enforced to ensure only valid and distinct token addresses can form pairs.
